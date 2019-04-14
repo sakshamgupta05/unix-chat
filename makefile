@@ -1,4 +1,4 @@
-all: bin/multithread bin/eventdriven bin/client
+all: clean dir bin/multithread bin/eventdriven bin/client
 
 dir:
 	mkdir bin
