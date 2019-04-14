@@ -1,9 +1,12 @@
+#define _POSIX_C_SOURCE 200112L
 #define _GNU_SOURCE
 #include <sys/epoll.h>
 #include <fcntl.h>
+#include <netdb.h>
 #include "chat.h"
 #include "serv.h"
 
+#define ADDRSTRLEN (NI_MAXHOST + NI_MAXSERV + 10)
 #define MAX_EVENTS 10
 
 struct clients clients = {NULL, NULL, 0};
@@ -16,6 +19,7 @@ static void useFd(int cfd) {
       struct client *client = malloc(sizeof(struct client));
       client -> cfd = cfd;
       strcpy(client -> name, cmd + 5);
+      client -> next = NULL;
 
       if (clients.first == NULL) {
         clients.first = client;
@@ -107,45 +111,64 @@ static void useFd(int cfd) {
 }
 
 int main() {
-  int sfd, optval;
-  struct sockaddr_in svaddr;
-  char svaddrStr[INET_ADDRSTRLEN];
-
   struct epoll_event ev, events[MAX_EVENTS];
   int nfds, epollfd;
 
-  sfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
-  if (sfd == 0) {
-    perror("socket");
+  int sfd, optval;
+  struct addrinfo hints;
+  struct addrinfo *result, *rp;
+
+  struct sockaddr_storage svaddr;
+  socklen_t addrlen;
+  char addrStr[ADDRSTRLEN];
+  char host[NI_MAXHOST];
+  char service[NI_MAXSERV];
+
+  memset(&hints, 0, sizeof(struct addrinfo));
+  hints.ai_canonname = NULL;
+  hints.ai_addr = NULL;
+  hints.ai_next = NULL;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_flags = AI_PASSIVE | AI_NUMERICSERV;
+  if (getaddrinfo(NULL, PORT_NUM, &hints, &result) != 0) {
+    perror("getaddrinfo");
     exit(EXIT_FAILURE);
   }
-
-  struct in_addr inaddr_any;
-  inaddr_any.s_addr = htonl(INADDR_ANY);
-
-  memset(&svaddr, 0, sizeof(struct sockaddr_in));
-  svaddr.sin_addr = inaddr_any;
-  svaddr.sin_port = htons(PORT_NUM);
 
   optval = 1;
-  if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) == -1) {
+  for (rp = result; rp != NULL; rp = rp->ai_next) {
+    sfd = socket(rp -> ai_family, rp -> ai_socktype | SOCK_NONBLOCK, rp -> ai_protocol);
+    if (sfd == -1)
+      continue;
+    if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) == -1) {
+      perror("setsockopt");
+      exit(EXIT_FAILURE);
+    }
+    if (bind(sfd, rp -> ai_addr, rp -> ai_addrlen) == 0)
+      break;
     close(sfd);
-    return -1;
   }
-
-  if (bind(sfd, (struct sockaddr *) &svaddr, sizeof(struct sockaddr_in)) == -1) {
-    perror("bind");
+  if (rp == NULL) {
+    printf("Could not bind socket to any address\n");
     exit(EXIT_FAILURE);
   }
-
   if (listen(sfd, SOMAXCONN) == -1) {
     perror("listen");
     exit(EXIT_FAILURE);
   }
+  freeaddrinfo(result);
 
-  if (inet_ntop(AF_INET, &svaddr.sin_addr, svaddrStr, INET_ADDRSTRLEN) != NULL) {
-    printf("listening to ip %s port %u\n", svaddrStr, ntohs(svaddr.sin_port));
+  addrlen = sizeof(struct sockaddr_storage);
+  getsockname(sfd, (struct sockaddr *) &svaddr, &addrlen);
+
+  if (getnameinfo((struct sockaddr *) &svaddr, addrlen,
+        host, NI_MAXHOST, service, NI_MAXSERV, 0) == 0) {
+    snprintf(addrStr, ADDRSTRLEN, "(%s, %s)", host, service);
+  } else {
+    snprintf(addrStr, ADDRSTRLEN, "(?UNKNOWN?)");
   }
+  printf("Listening to %s\n", addrStr);
 
   epollfd = epoll_create1(0);
   if (epollfd == -1) {
@@ -170,19 +193,24 @@ int main() {
 
     for (int n = 0; n < nfds; ++n) {
       if (events[n].data.fd == sfd) {
-        struct sockaddr_in claddr;
+        char addrStr[ADDRSTRLEN];
+        char host[NI_MAXHOST];
+        char service[NI_MAXSERV];
+        struct sockaddr_storage claddr;
         socklen_t addrlen;
-        char claddrStr[INET_ADDRSTRLEN];
         int cfd = accept4(sfd, (struct sockaddr *) &claddr, &addrlen, SOCK_NONBLOCK);
         if (cfd == -1) {
           perror("accept");
           exit(EXIT_FAILURE);
         }
-        if (inet_ntop(AF_INET, &claddr.sin_addr, claddrStr, INET_ADDRSTRLEN) == NULL) {
-          printf("Couldn't convert client address to string\n");
+        if (getnameinfo((struct sockaddr *) &claddr, addrlen,
+              host, NI_MAXHOST, service, NI_MAXSERV, 0) == 0) {
+          snprintf(addrStr, ADDRSTRLEN, "(%s, %s)", host, service);
         } else {
-          printf("Server connected to (%s, %u)\n", claddrStr, ntohs(claddr.sin_port));
+          snprintf(addrStr, ADDRSTRLEN, "(?UNKNOWN?)");
         }
+        printf("Connection from %s\n", addrStr);
+
         ev.events = EPOLLIN | EPOLLET;
         ev.data.fd = cfd;
         if (epoll_ctl(epollfd, EPOLL_CTL_ADD, cfd, &ev) == -1) {

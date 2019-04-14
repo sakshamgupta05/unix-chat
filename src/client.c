@@ -21,7 +21,7 @@ void client(char* addr, enum mode m, int M) {
   hints.ai_socktype = SOCK_STREAM;
   hints.ai_flags = AI_NUMERICSERV;
 
-  if (getaddrinfo(addr, PORT_NUM_S, &hints, &result) != 0) {
+  if (getaddrinfo(addr, PORT_NUM, &hints, &result) != 0) {
     perror("getaddrinfo");
     exit(EXIT_FAILURE);
   }
@@ -29,7 +29,7 @@ void client(char* addr, enum mode m, int M) {
   for (rp = result; rp != NULL; rp = rp->ai_next) {
     cfd = socket(rp -> ai_family, rp -> ai_socktype, rp -> ai_protocol);
     if (cfd == -1) continue;
-    if (connect(cfd, rp->ai_addr, rp->ai_addrlen) != -1)
+    if (connect(cfd, rp -> ai_addr, rp -> ai_addrlen) != -1)
       break;
     close(cfd);
   }

@@ -1,37 +1,28 @@
+#define _POSIX_C_SOURCE 200112L
+#define _DEFAULT_SOURCE
 #include <pthread.h>
+#include <netdb.h>
 #include "chat.h"
 #include "serv.h"
 
+#define ADDRSTRLEN (NI_MAXHOST + NI_MAXSERV + 10)
+
 struct clients clients = {NULL, NULL, 0};
 pthread_mutex_t mtxClients = PTHREAD_MUTEX_INITIALIZER;
-
-// TODO: make protocol independent
-// TODO: take ip in client from command line
 
 static void* useFd(void *arg) {
   int cfd = (*(int *) arg);
   free(arg);
 
   int s;
-  struct sockaddr_in claddr;
-  socklen_t addrlen;
-  char claddrStr[INET_ADDRSTRLEN];
   char cmd[ARG_MAX];
-
-  addrlen = sizeof(struct sockaddr_in);
-  getpeername(cfd, (struct sockaddr *) &claddr, &addrlen);
-
-  if (inet_ntop(AF_INET, &claddr.sin_addr, claddrStr, INET_ADDRSTRLEN) == NULL) {
-    printf("Couldn't convert client address to string\n");
-  } else {
-    printf("Server connected to (%s, %u)\n", claddrStr, ntohs(claddr.sin_port));
-  }
 
   while (readLine(cfd, &cmd, ARG_MAX) > 0) {
     if (strncmp(cmd, "JOIN ", 5) == 0) {
       struct client *client = malloc(sizeof(struct client));
       client -> cfd = cfd;
       strcpy(client -> name, cmd + 5);
+      client -> next = NULL;
 
       // critical section
       s = pthread_mutex_lock(&mtxClients);
@@ -145,56 +136,90 @@ static void* useFd(void *arg) {
 
 int main() {
   int sfd, optval;
-  struct sockaddr_in svaddr;
-  char svaddrStr[INET_ADDRSTRLEN];
+  struct addrinfo hints;
+  struct addrinfo *result, *rp;
 
-  sfd = socket(AF_INET, SOCK_STREAM, 0);
-  if (sfd == 0) {
-    perror("socket");
+  struct sockaddr_storage svaddr;
+  socklen_t addrlen;
+  char addrStr[ADDRSTRLEN];
+  char host[NI_MAXHOST];
+  char service[NI_MAXSERV];
+
+  memset(&hints, 0, sizeof(struct addrinfo));
+  hints.ai_canonname = NULL;
+  hints.ai_addr = NULL;
+  hints.ai_next = NULL;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_flags = AI_PASSIVE | AI_NUMERICSERV;
+  if (getaddrinfo(NULL, PORT_NUM, &hints, &result) != 0) {
+    perror("getaddrinfo");
     exit(EXIT_FAILURE);
   }
-
-  struct in_addr inaddr_any;
-  inaddr_any.s_addr = htonl(INADDR_ANY);
-
-  memset(&svaddr, 0, sizeof(struct sockaddr_in));
-  svaddr.sin_addr = inaddr_any;
-  svaddr.sin_port = htons(PORT_NUM);
 
   optval = 1;
-  if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) == -1) {
+  for (rp = result; rp != NULL; rp = rp->ai_next) {
+    sfd = socket(rp -> ai_family, rp -> ai_socktype, rp -> ai_protocol);
+    if (sfd == -1)
+      continue;
+    if (setsockopt(sfd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval)) == -1) {
+      perror("setsockopt");
+      exit(EXIT_FAILURE);
+    }
+    if (bind(sfd, rp -> ai_addr, rp -> ai_addrlen) == 0)
+      break;
     close(sfd);
-    return -1;
   }
-
-  if (bind(sfd, (struct sockaddr *) &svaddr, sizeof(struct sockaddr_in)) == -1) {
-    perror("bind");
+  if (rp == NULL) {
+    printf("Could not bind socket to any address\n");
     exit(EXIT_FAILURE);
   }
-
   if (listen(sfd, SOMAXCONN) == -1) {
     perror("listen");
     exit(EXIT_FAILURE);
   }
+  freeaddrinfo(result);
 
-  if (inet_ntop(AF_INET, &svaddr.sin_addr, svaddrStr, INET_ADDRSTRLEN) != NULL) {
-    printf("listening to ip %s port %u\n", svaddrStr, ntohs(svaddr.sin_port));
+  addrlen = sizeof(struct sockaddr_storage);
+  getsockname(sfd, (struct sockaddr *) &svaddr, &addrlen);
+
+  if (getnameinfo((struct sockaddr *) &svaddr, addrlen,
+        host, NI_MAXHOST, service, NI_MAXSERV, 0) == 0) {
+    snprintf(addrStr, ADDRSTRLEN, "(%s, %s)", host, service);
+  } else {
+    snprintf(addrStr, ADDRSTRLEN, "(?UNKNOWN?)");
   }
+  printf("Listening to %s\n", addrStr);
 
   for (;;) {
+    char addrStr[ADDRSTRLEN];
+    char host[NI_MAXHOST];
+    char service[NI_MAXSERV];
+    struct sockaddr_storage claddr;
+    socklen_t addrlen;
+
     int *cfd = malloc(sizeof(int));
-    *cfd = accept(sfd, NULL, NULL);
+    *cfd = accept(sfd, (struct sockaddr *) &claddr, &addrlen);
     if (*cfd == -1) {
       perror("accept");
       continue;
     }
+
+    if (getnameinfo((struct sockaddr *) &claddr, addrlen,
+          host, NI_MAXHOST, service, NI_MAXSERV, 0) == 0) {
+      snprintf(addrStr, ADDRSTRLEN, "(%s, %s)", host, service);
+    } else {
+      snprintf(addrStr, ADDRSTRLEN, "(?UNKNOWN?)");
+    }
+    printf("Connection from %s\n", addrStr);
+
     pthread_t t1;
     int s = pthread_create(&t1, NULL, useFd, cfd);
     if (s != 0) {
       printf("pthread_create error\n");
-      continue;
+      close(*cfd);
+      free(cfd);
     }
-
   }
 
   return 0;
