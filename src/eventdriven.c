@@ -26,16 +26,17 @@ static void useFd(int cfd) {
       }
       clients.totClients++;
 
-      write(cfd, "successfully joined\n", 20);
+      strcpy(cmd, "successfully joined\r\n");
+      write(cfd, cmd, strlen(cmd));
 
     } else if (strcmp(cmd, "LIST") == 0) {
       struct client *cptr = clients.first;
       while (cptr != NULL) {
         write(cfd, cptr -> name, strlen(cptr -> name));
-        write(cfd, "\t", 1);
+        if (cptr -> next != NULL) write(cfd, "\n", 1);
         cptr = cptr -> next;
       }
-      write(cfd, "\n", 1);
+      write(cfd, "\r\n", 2);
 
     } else if (strncmp(cmd, "UMSG ", 5) == 0) {
       int mcfd = -1;
@@ -48,11 +49,12 @@ static void useFd(int cfd) {
         cptr = cptr -> next;
       }
       if (mcfd == -1) {
-        write(cfd, "ERROR: not online\n", 18);
+        strcpy(cmd, "ERROR: not online\r\n");
+        write(cfd, cmd, strlen(cmd));
       } else {
         readLine(cfd, cmd, ARG_MAX);
         write(mcfd, cmd, strlen(cmd));
-        write(mcfd, "\n", 1);
+        write(mcfd, "\r\n", 2);
       }
 
     } else if (strncmp(cmd, "BMSG ", 5) == 0) {
@@ -60,7 +62,7 @@ static void useFd(int cfd) {
       while (cptr != NULL) {
         if (cptr -> cfd != cfd) {
           write(cptr -> cfd, cmd + 5, strlen(cmd + 5));
-          write(cptr -> cfd, "\n", 1);
+          write(cptr -> cfd, "\r\n", 2);
         }
         cptr = cptr -> next;
       }
@@ -93,11 +95,13 @@ static void useFd(int cfd) {
       if (leav) {
         close(cfd);
       } else {
-        write(cfd, "leave failed\n", 5);
+        strcpy(cmd, "leave failed\r\n");
+        write(cfd, cmd, strlen(cmd));
       }
 
     } else{
-      write(cfd, "wrong command\n", 14);
+      strcpy(cmd, "wrong command\r\n");
+      write(cfd, cmd, strlen(cmd));
     }
   }
 }

@@ -1,65 +1,79 @@
-#define _POSIX_SOURCE
+#define _POSIX_C_SOURCE 200112L
 #include <signal.h>
 #include <sys/wait.h>
+#include <netdb.h>
 #include <time.h>
 #include "chat.h"
 
 enum mode{manual, bench};
 
-void client(enum mode m, int M) {
-  int sfd;
-  struct sockaddr_in svaddr;
+void client(char* addr, enum mode m, int M) {
+  int cfd;
   char cmd[ARG_MAX];
+  struct addrinfo hints;
+  struct addrinfo *result, *rp;
 
-  sfd = socket(AF_INET, SOCK_STREAM, 0);
-  if (sfd == 0) {
-    perror("socket");
+  memset(&hints, 0, sizeof(struct addrinfo));
+  hints.ai_canonname = NULL;
+  hints.ai_addr = NULL;
+  hints.ai_next = NULL;
+  hints.ai_family = AF_UNSPEC;
+  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_flags = AI_NUMERICSERV;
+
+  if (getaddrinfo(addr, PORT_NUM_S, &hints, &result) != 0) {
+    perror("getaddrinfo");
     exit(EXIT_FAILURE);
   }
 
-  struct in_addr inaddr_any;
-  inaddr_any.s_addr = htonl(INADDR_LOOPBACK);
+  for (rp = result; rp != NULL; rp = rp->ai_next) {
+    cfd = socket(rp -> ai_family, rp -> ai_socktype, rp -> ai_protocol);
+    if (cfd == -1) continue;
+    if (connect(cfd, rp->ai_addr, rp->ai_addrlen) != -1)
+      break;
+    close(cfd);
+  }
 
-  memset(&svaddr, 0, sizeof(struct sockaddr_in));
-  svaddr.sin_family = AF_INET;
-  svaddr.sin_addr = inaddr_any;
-  svaddr.sin_port = htons(PORT_NUM);
-
-  if (connect(sfd, (struct sockaddr *) &svaddr, sizeof(struct sockaddr_in)) == -1) {
-    perror("connect");
+  if (rp == NULL){
+    printf("Could not connect socket to any address\n");
     exit(EXIT_FAILURE);
   }
+  freeaddrinfo(result);
 
   pid_t pid = fork();
   if (pid == 0) {
     if (m == manual) {
-      while (fgets(cmd, ARG_MAX, stdin) != NULL) {
-        write(sfd, cmd, strlen(cmd));
+      while (fgets(cmd, ARG_MAX-1, stdin) != NULL) {
+        int len = strlen(cmd);
+        cmd[len - 1] = '\r';
+        cmd[len] = '\n';
+        cmd[len + 1]  = '\0';
+        write(cfd, cmd, len + 1);
       }
     } else {
-      strcpy(cmd, "JOIN name\n");
-      write(sfd, cmd, strlen(cmd));
-      strcpy(cmd, "BMSG hello\n");
+      strcpy(cmd, "JOIN name\r\n");
+      write(cfd, cmd, strlen(cmd));
+      strcpy(cmd, "BMSG hello\r\n");
       for (int i = 0; i < M; i++) {
-        write(sfd, cmd, strlen(cmd));
+        write(cfd, cmd, strlen(cmd));
       }
-      strcpy(cmd, "LEAV\n");
-      write(sfd, cmd, strlen(cmd));
+      strcpy(cmd, "LEAV\r\n");
+      write(cfd, cmd, strlen(cmd));
     }
-    close(sfd);
+    close(cfd);
     exit(EXIT_SUCCESS);
   } else {
-    while (readLine(sfd, cmd, ARG_MAX) > 0) {
+    while (readLine(cfd, cmd, ARG_MAX) > 0) {
       if (m == manual) {
         printf("%s\n", cmd);
       }
     }
-    close(sfd);
+    close(cfd);
     kill(pid, SIGKILL);
   }
 }
 
-void client_bench(int N, int M, int T) {
+void client_bench(char *addr, int N, int M, int T) {
   int n = 0;
   for (int i = 0; i < T; i++) {
     printf("client %d connected\n", i);
@@ -68,7 +82,7 @@ void client_bench(int N, int M, int T) {
       perror("fork");
       exit(EXIT_FAILURE);
     } else if (pid == 0) {
-      client(bench, M);
+      client(addr, bench, M);
       exit(EXIT_SUCCESS);
     }
 
@@ -79,19 +93,49 @@ void client_bench(int N, int M, int T) {
   }
 }
 
+static void usageError(char *progName, char *msg, int opt) {
+  if (msg != NULL && opt != 0)
+  fprintf(stderr, "%s (-%c)\n", msg, printable(opt));
+  fprintf(stderr, "Usage: %s [-a arg] [-b \"N M T\"]\n", progName);
+  exit(EXIT_FAILURE);
+}
+
 int main(int argc, char *argv[]) {
-  if (argc == 1) {
+  enum mode mode;
+  int opt;
+  char *benStr = NULL;
+  char *addrStr = NULL;
+  while ((opt = getopt(argc, argv, ":a:b:")) != -1) {
+    switch (opt) {
+    case 'a':
+      addrStr = optarg;
+      break;
+    case 'b':
+      benStr = optarg;
+      break;
+    case ':':
+      usageError(argv[0], "Missing argument", optopt);
+    case '?':
+      usageError(argv[0], "Unrecognized option", optopt);
+    default:
+      printf("Unexpected case in switch()\n");
+      exit(EXIT_FAILURE);
+    }
+  }
+  if (addrStr == NULL) {
+    addrStr = ADDR_LOOPBACK;
+  }
+  if (benStr == NULL) mode = manual;
+  else mode = bench;
+
+  if (mode == manual) {
     printf("starting in manual mode\n");
-    client(manual, 0);
-  } else if (argc == 4) {
-    printf("starting in benchmark mode\n");
-    int N = atoi(argv[1]);
-    int M = atoi(argv[2]);
-    int T = atoi(argv[3]);
-    client_bench(N, M, T);
+    client(addrStr, mode, 0);
   } else {
-    printf("provide 0 args for manual mode or 3 args (N, M, T) for benchmark mode\n");
-    exit(EXIT_FAILURE);
+    printf("starting in benchmark mode\n");
+    int N, M, T;
+    sscanf(benStr, "%d %d %d", &N, &M, &T);
+    client_bench(addrStr, N, M, T);
   }
   return 0;
 }

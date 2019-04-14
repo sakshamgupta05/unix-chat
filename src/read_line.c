@@ -6,6 +6,7 @@ ssize_t readLine(int fd, void *buffer, size_t n) {
   size_t totRead;
   char *buf;
   char ch;
+  int cr = 0;
 
   if (n <= 0 || buffer == NULL) {
     errno = EINVAL;
@@ -29,12 +30,15 @@ ssize_t readLine(int fd, void *buffer, size_t n) {
       else
         break;
     } else {
-      if (ch == '\n') {
+      if (ch == '\n' && cr) {
+        buf--;
         break;
       }
       if (totRead < n) {
         totRead++;
         *buf++ = ch;
+        if (ch == '\r') cr = 1;
+        else cr = 0;
       }
     }
   }
