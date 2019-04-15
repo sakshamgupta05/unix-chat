@@ -91,6 +91,10 @@ void client_bench(char *addr, int N, int M, int T) {
       n--;
     }
   }
+  while (n > 0) {
+    wait(NULL);
+    n--;
+  }
 }
 
 static void usageError(char *progName, char *msg, int opt) {
