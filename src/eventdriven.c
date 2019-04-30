@@ -11,6 +11,8 @@
 
 struct clients clients = {NULL, NULL, 0};
 
+int nfds, epollfd;
+
 static void useFd(int cfd) {
   char cmd[ARG_MAX];
 
@@ -97,6 +99,10 @@ static void useFd(int cfd) {
       }
 
       if (leav) {
+        if (epoll_ctl(epollfd, EPOLL_CTL_DEL, cfd, NULL) == -1) {
+          perror("epoll_ctl: conn_sock");
+          exit(EXIT_FAILURE);
+        }
         close(cfd);
       } else {
         strcpy(cmd, "leave failed\r\n");
@@ -112,8 +118,6 @@ static void useFd(int cfd) {
 
 int main() {
   struct epoll_event ev, events[MAX_EVENTS];
-  int nfds, epollfd;
-
   int sfd, optval;
   struct addrinfo hints;
   struct addrinfo *result, *rp;
