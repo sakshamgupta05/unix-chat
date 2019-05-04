@@ -3,6 +3,7 @@
 #include <sys/wait.h>
 #include <netdb.h>
 #include <time.h>
+#include <sys/time.h>
 #include "chat.h"
 
 enum mode{manual, bench};
@@ -74,6 +75,10 @@ void client(char* addr, enum mode m, int M) {
 }
 
 void client_bench(char *addr, int N, int M, int T) {
+  struct timeval t1, t2;
+  double elapsedTime;
+  gettimeofday(&t1, NULL);
+
   int n = 0;
   for (int i = 0; i < T; i++) {
     printf("client %d connected\n", i);
@@ -95,6 +100,11 @@ void client_bench(char *addr, int N, int M, int T) {
     wait(NULL);
     n--;
   }
+
+  gettimeofday(&t2, NULL);
+  elapsedTime = (t2.tv_sec - t1.tv_sec) * 1000.0;
+  elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000.0;
+  printf("execution took %lf ms\n", elapsedTime);
 }
 
 static void usageError(char *progName, char *msg, int opt) {
