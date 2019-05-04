@@ -16,7 +16,7 @@ int nfds, epollfd;
 static void useFd(int cfd) {
   char cmd[ARG_MAX];
 
-  while (readLine(cfd, &cmd, ARG_MAX) > 0) {
+  if (readLine(cfd, &cmd, ARG_MAX) > 0) {
     if (strncmp(cmd, "JOIN ", 5) == 0) {
       struct client *client = malloc(sizeof(struct client));
       client -> cfd = cfd;
@@ -202,7 +202,7 @@ int main() {
         char service[NI_MAXSERV];
         struct sockaddr_storage claddr;
         socklen_t addrlen;
-        int cfd = accept4(sfd, (struct sockaddr *) &claddr, &addrlen, SOCK_NONBLOCK);
+        int cfd = accept(sfd, (struct sockaddr *) &claddr, &addrlen);
         if (cfd == -1) {
           perror("accept");
           exit(EXIT_FAILURE);
@@ -215,7 +215,7 @@ int main() {
         }
         printf("Connection from %s\n", addrStr);
 
-        ev.events = EPOLLIN | EPOLLET;
+        ev.events = EPOLLIN;
         ev.data.fd = cfd;
         if (epoll_ctl(epollfd, EPOLL_CTL_ADD, cfd, &ev) == -1) {
           perror("epoll_ctl: conn_sock");

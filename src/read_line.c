@@ -28,7 +28,7 @@ ssize_t readLine(int fd, void *buffer, size_t n) {
       if (totRead == 0)
         return 0;
       else
-        break;
+        continue;
     } else {
       if (ch == '\n' && cr) {
         buf--;
