@@ -99,10 +99,6 @@ static void useFd(int cfd) {
       }
 
       if (leav) {
-        if (epoll_ctl(epollfd, EPOLL_CTL_DEL, cfd, NULL) == -1) {
-          perror("epoll_ctl: conn_sock");
-          exit(EXIT_FAILURE);
-        }
         close(cfd);
       } else {
         strcpy(cmd, "leave failed\r\n");
